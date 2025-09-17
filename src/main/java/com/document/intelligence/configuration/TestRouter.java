@@ -1,0 +1,65 @@
+package com.document.intelligence.configuration;
+
+
+import com.document.intelligence.handler.TestHandler;
+import com.document.intelligence.service.LangChainOllamaService;
+import com.document.intelligence.service.LlmService;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.reactive.function.server.RouterFunction;
+import org.springframework.web.reactive.function.server.ServerResponse;
+
+import static org.springframework.web.reactive.function.server.RequestPredicates.POST;
+import static org.springframework.web.reactive.function.server.RouterFunctions.route;
+
+@Configuration
+public class TestRouter {
+
+
+    @Bean
+    public RouterFunction<ServerResponse> aiRoutes(LlmService aiService) {
+        return route()
+                .GET("/api/test-ai", req -> {
+                    String response = aiService.askLlama("Who is Arjuna?");
+                    return ServerResponse.ok().bodyValue(response);
+                })
+                .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> langChainLlm(LangChainOllamaService aiService) {
+        return route()
+                .GET("/api/test/llm", req -> {
+                    String response = aiService.askLangLlama("Who is Arjuna?");
+                    return ServerResponse.ok().bodyValue(response);
+                })
+                .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> routes(TestHandler handler) {
+        return route(POST("/files/upload"), handler::upload);
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> docRoutes(TestHandler handler) {
+        return route()
+                .POST("/dynamo/insert", handler::insert)
+                .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> dbGet(TestHandler testHandler) {
+        return route()
+                .POST("/details", testHandler::getDocument)
+                .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> pineconeRoutes(TestHandler testHandler) {
+        return route()
+                .POST("/api/test-pinecone", testHandler::testPinecone)
+                .build();
+    }
+
+}
