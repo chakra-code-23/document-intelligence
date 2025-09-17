@@ -23,15 +23,16 @@ public class QaHandler {
 
     public Mono<ServerResponse> askQuestion(ServerRequest request) {
         return request.bodyToMono(QuestionRequest.class)
-                .flatMap(kagOrRagRouterService::route)
+                .flatMap(kagOrRagRouterService::route) // returns Mono<AnswerResponse>
                 .flatMap(answer ->
                         ServerResponse.ok()
-                                .bodyValue(answer)
+                                .body(Mono.just(answer), AnswerResponse.class) // ✅ correct
                 )
                 .onErrorResume(err -> {
                     log.error("Error while processing QA: {}", err.getMessage(), err);
                     return ServerResponse.status(500)
-                            .bodyValue(new AnswerResponse("Failed to generate answer", List.of()));
+                            .body(Mono.just(new AnswerResponse("Failed to generate answer", List.of())), AnswerResponse.class);
                 });
     }
+
 }
