@@ -85,12 +85,44 @@ public class QaService {
         prompt.append("You are a helpful assistant. Use the following context to answer the question.\n\n");
 
         for (int i = 0; i < context.size(); i++) {
-            prompt.append("Context ").append(i + 1).append(": ").append(context.get(i)).append("\n");
+            String cleanContext = sanitizeContext(context.get(i));
+            prompt.append("Context ").append(i + 1).append(": ").append(cleanContext).append("\n");
         }
 
         prompt.append("\nQuestion: ").append(question).append("\n");
         prompt.append("Answer in clear and concise English.");
 
-        return claudeApiService.callClaudeReactive(prompt.toString());
+        // always returns a Mono<String>
+        return sanitizeText(claudeApiService.callClaudeReactive(prompt.toString()));
     }
+
+    private Mono<String> sanitizeText(Mono<String> inputMono) {
+        return inputMono
+                .map(input -> {
+                    if (input == null) {
+                        return "";
+                    }
+                    String result = input;
+                    result = result.replace("\"", "\\\"");
+                    result = result.replaceAll("\\n+", " ");    // replace newlines
+                    result = result.replaceAll("\\s{2,}", " "); // collapse spaces
+                    return result.trim();
+                })
+                .onErrorResume(e -> {
+                    // fallback in case of exception
+                    return Mono.just("");
+                });
+    }
+
+    private String sanitizeContext(String input) {
+        if (input == null) {
+            return "";
+        }
+        String result = input;
+        result = result.replace("\"", "\\\"");
+        result = result.replaceAll("\\n+", " ");    // replace newlines
+        result = result.replaceAll("\\s{2,}", " "); // collapse spaces
+        return result.trim();
+    }
+
 }
