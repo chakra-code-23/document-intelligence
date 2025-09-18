@@ -114,64 +114,10 @@ public class DocumentService {
                 .then(); // return Mono<Void> when visible
     }
 
-    /*
-     * ========== OLD IMPLEMENTATION ==========
-     * This version only uploaded to S3, saved metadata,
-     * and then split the document. No parsing was included.
-     *
-     public Mono<SplitResponse> processDocument(FilePart filePart,
-                                                String topicName,
-                                                String userId,
-                                                String userName,
-                                                String userEmail) {
-
-         String documentId = UUID.randomUUID().toString();
-         String topicId = UUID.randomUUID().toString();
-         String s3Key = topicId + "/" + documentId + "/" + filePart.filename();
-
-         log.info("Processing upload: documentId={}, topicId={}, fileName={}, userId={}",
-                 documentId, topicId, filePart.filename(), userId);
-
-         return DataBufferUtils.join(filePart.content())
-                 .map(dataBuffer -> {
-                     byte[] bytes = new byte[dataBuffer.readableByteCount()];
-                     dataBuffer.read(bytes);
-                     DataBufferUtils.release(dataBuffer);
-                     log.info("Read {} bytes from uploaded file {}", bytes.length, filePart.filename());
-                     return bytes;
-                 })
-                 .flatMap(bytes ->
-                         s3Service.upload(BUCKET, s3Key, bytes)
-                                 .doOnSuccess(resp -> log.info("File uploaded to S3 with key={}", s3Key))
-                                 .doOnError(err -> log.error("Failed to upload to S3: {}", err.getMessage(), err))
-                                 .then(
-                                         dbService.save(DocumentMetadata.builder()
-                                                         .userId(userId)
-                                                         .topicId(topicId)
-                                                         .topicName(topicName)
-                                                         .documentId(documentId)
-                                                         .documentName(filePart.filename())
-                                                         .userName(userName)
-                                                         .userEmail(userEmail)
-                                                         .ingestionStatus("IN_PROGRESS")
-                                                         .s3Key(s3Key)
-                                                         .build()
-                                                 )
-                                                 .doOnSuccess(resp -> log.info("Metadata saved to DB for documentId={}", documentId))
-                                                 .doOnError(err -> log.error("Failed to save metadata: {}", err.getMessage(), err))
-                                 )
-                                 .then(Mono.defer(() -> splitPdfDocument.split(BUCKET, s3Key, documentId)))
-                                 .doOnSuccess(resp -> log.info("Splitting completed for documentId={}", documentId))
-                                 .doOnError(err -> log.error("Failed to split document: {}", err.getMessage(), err))
-                 );
-     }
-     */
-
-    /*
-     * ========== NEW IMPLEMENTATION ==========
-     * This version uploads to S3 → saves metadata → splits PDF → parses chunks with LLM.
-     *
-    public Mono<SplitResponse> processDocument(FilePart filePart,
+  /*
+    **** THIS IS JUST FOR RECEIVING THE PARSED RESPONSE ****
+    *
+    public Mono<SplitResponse> processDocumentParsed(FilePart filePart,
                                                String topicName,
                                                String userId,
                                                String userName,
