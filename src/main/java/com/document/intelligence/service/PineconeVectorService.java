@@ -8,6 +8,8 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pinecone.PineconeEmbeddingStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -56,47 +58,48 @@ public class PineconeVectorService {
      * @param chunks   list of text chunks
      * @param metadata map of metadata (docId, topicId, pageNo, etc.)
      */
-    public void saveChunksToPineCone(List<String> chunks, Map<String, String> metadata) {
+    public Mono<Void> saveChunksToPineCone(List<String> chunks, Map<String, String> metadata) {
         if (chunks == null || chunks.isEmpty()) {
             log.warn("No chunks provided for Pinecone storage");
-            return;
+            return Mono.empty();
         }
 
-        // 1. Wrap each chunk into a TextSegment with metadata
-        List<TextSegment> segments = IntStream.range(0, chunks.size())
-                .mapToObj(i -> {
+        return Flux.fromIterable(IntStream.range(0, chunks.size()).boxed().toList())
+                .flatMap(i -> {
                     Metadata md = new Metadata();
                     metadata.forEach(md::add);
                     md.add("chunkIndex", String.valueOf(i));
 
-                    return TextSegment.from(chunks.get(i), md);
+                    TextSegment segment = TextSegment.from(chunks.get(i), md);
+
+                    // Generate embedding (still sync, so wrap in Mono.fromCallable)
+                    return Mono.fromCallable(() -> embeddingModel.embed(segment).content())
+                            .map(embedding -> Map.of(
+                                    "embedding", embedding,
+                                    "segment", segment
+                            ));
                 })
-                .toList();
+                .flatMap(entry -> {
+                    Embedding embedding = (Embedding) entry.get("embedding");
+                    TextSegment segment = (TextSegment) entry.get("segment");
 
-        // 2. Generate embeddings for all segments
-        List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
+                    return Mono.fromRunnable(() -> {
+                        String id = UUID.randomUUID().toString();
+                        embeddingStore.add(embedding, segment);
 
-        // 3. Store each embedding + segment into Pinecone
-        IntStream.range(0, segments.size()).forEach(i -> {
-            Embedding embedding = embeddings.get(i);
-            TextSegment segment = segments.get(i);
+                        String pageNo = segment.metadata().get("pageNo");
+                        String chunkIndex = segment.metadata().get("chunkIndex");
 
-            String id = UUID.randomUUID().toString();
-            embeddingStore.add(embedding, segment);
-
-            String pageNo = segment.metadata().get("pageNo");
-            String chunkIndex = segment.metadata().get("chunkIndex");
-
-            log.info("Stored chunk (pageNo={}, chunkIndex={}) in Pinecone with ID={} (docId={}, topicId={})",
-                    pageNo, chunkIndex, id,
-                    segment.metadata().get("documentId"),
-                    segment.metadata().get("topicId"));
-        });
-
-
-        log.info("✅ Successfully stored {} chunks for docId={} into Pinecone",
-                chunks.size(), metadata.get("documentId"));
+                        log.info("Stored chunk (pageNo={}, chunkIndex={}) in Pinecone with ID={} (docId={}, topicId={})",
+                                pageNo, chunkIndex, id,
+                                segment.metadata().get("documentId"),
+                                segment.metadata().get("topicId"));
+                    });
+                })
+                .then()
+                .doOnSuccess(v -> log.info("✅ Successfully stored {} chunks for docId={} into Pinecone",
+                        chunks.size(), metadata.get("documentId")))
+                .doOnError(e -> log.error("❌ Pinecone ingestion failed: {}", e.getMessage(), e));
     }
-
 
 }

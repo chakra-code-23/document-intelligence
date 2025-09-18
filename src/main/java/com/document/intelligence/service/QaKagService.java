@@ -6,6 +6,7 @@ import com.document.intelligence.dto.QuestionRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -17,40 +18,37 @@ public class QaKagService {
     private final LangChainOllamaService llmService;
     private final Neo4jGraphService graphService;
     private final QaService qaService;
+    private final ClaudeApiService claudeApiService;
 
-    public AnswerResponse answer(QuestionRequest request) {
+    public Mono<AnswerResponse> answer(QuestionRequest request) {
         log.info("Processing KAG for question={}", request.getQuestion());
 
         String question = request.getQuestion();
-        String documentId = request.getDocumentId(); // Assuming this exists in QuestionRequest
+        String documentId = request.getDocumentId();
 
-        try {
-            // Step 1: Query Neo4j for entities/relationships
-            String graphContext = graphService.queryRelevantEntities(question, documentId);
-            log.info("Retrieved graph context length: {}", graphContext.length());
+        return graphService.queryRelevantEntities(question, documentId) // already Mono<String>
+                .flatMap(graphContext -> {
+                    log.info("Retrieved graph context length: {}", graphContext.length());
 
-            // Step 2: If no graph context, fallback to RAG
-            if (graphContext.isEmpty() || graphContext.trim().length() < 50) {
-                log.info("Insufficient graph context, falling back to RAG");
-                return qaService.chat(request).block(); // Fallback to your existing RAG service
-            }
+                    if (graphContext.isEmpty() || graphContext.trim().length() < 50) {
+                        log.info("Insufficient graph context, falling back to RAG");
+                        return qaService.chat(request); // already returns Mono<AnswerResponse>
+                    }
 
-            // Step 3: Generate KAG-based answer using graph context
-            String kagAnswer = generateKagAnswer(question, graphContext);
+                    String prompt = buildKagPrompt(question, graphContext);
 
-            log.info("✅ KAG answer generated successfully");
-            return new AnswerResponse(kagAnswer, List.of(graphContext));
-
-        } catch (Exception e) {
-            log.error("❌ KAG processing failed, falling back to RAG: {}", e.getMessage(), e);
-            return qaService.chat(request).block(); // Fallback to RAG on any error
-        }
+                    return claudeApiService.callClaudeReactive(prompt)
+                            .map(kagAnswer -> {
+                                log.info("✅ KAG answer generated successfully");
+                                return new AnswerResponse(kagAnswer, List.of(graphContext));
+                            });
+                })
+                .onErrorResume(e -> {
+                    log.error("❌ KAG processing failed, falling back to RAG: {}", e.getMessage(), e);
+                    return qaService.chat(request);
+                });
     }
 
-    private String generateKagAnswer(String question, String graphContext) {
-        String prompt = buildKagPrompt(question, graphContext);
-        return llmService.askLangLlama(prompt);
-    }
 
     private String buildKagPrompt(String question, String graphContext) {
         return """

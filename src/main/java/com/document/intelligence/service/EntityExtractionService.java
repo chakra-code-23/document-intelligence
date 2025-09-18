@@ -4,6 +4,7 @@ import com.document.intelligence.dto.EntityInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.*;
 
@@ -13,33 +14,42 @@ import java.util.*;
 public class EntityExtractionService {
 
     private final LangChainOllamaService llmService;
+    private final ClaudeApiService claudeApiService;
 
-    public List<EntityInfo> extractEntities(String text) {
+    public Mono<List<EntityInfo>> extractEntities(String text) {
         try {
             String prompt = buildEntityExtractionPrompt(text);
-            String response = llmService.askLangLlama(prompt);
 
-            log.info("LLM Entity Response for text '{}': '{}'", text.substring(0, Math.min(50, text.length())), response);
+            return claudeApiService.callClaudeReactive(prompt)
+                    .map(response -> {
+                        log.info("LLM Entity Response for text '{}': '{}'",
+                                text.substring(0, Math.min(50, text.length())), response);
 
-            List<EntityInfo> entities = parseEntityResponse(response);
+                        List<EntityInfo> entities = parseEntityResponse(response);
 
-            log.info("Extracted {} valid entities from text length: {}", entities.size(), text.length());
+                        log.info("Extracted {} valid entities from text length: {}", entities.size(), text.length());
 
-            // Log the actual entities we extracted for debugging
-            if (!entities.isEmpty()) {
-                log.info("Successfully extracted entities:");
-                entities.forEach(entity -> log.info("  - {} ({})", entity.getName(), entity.getType()));
-            } else {
-                log.warn("No valid entities extracted from LLM response");
-            }
+                        if (!entities.isEmpty()) {
+                            log.info("Successfully extracted entities:");
+                            entities.forEach(entity ->
+                                    log.info("  - {} ({})", entity.getName(), entity.getType()));
+                        } else {
+                            log.warn("No valid entities extracted from LLM response");
+                        }
 
-            return entities;
+                        return entities;
+                    })
+                    .onErrorResume(e -> {
+                        log.error("Failed to extract entities from text: {}", e.getMessage(), e);
+                        return Mono.just(Collections.emptyList());
+                    });
 
         } catch (Exception e) {
-            log.error("Failed to extract entities from text: {}", e.getMessage(), e);
-            return Collections.emptyList();
+            log.error("Failed to build entity extraction prompt: {}", e.getMessage(), e);
+            return Mono.just(Collections.emptyList());
         }
     }
+
 
     private String buildEntityExtractionPrompt(String text) {
         return """
@@ -76,7 +86,7 @@ public class EntityExtractionService {
         log.info("Raw LLM response for entity extraction: {}", response);
 
         // Handle case where LLM returns "NONE"
-        if (response.trim().toUpperCase().equals("NONE")) {
+        if (response.trim().equalsIgnoreCase("NONE")) {
             log.info("LLM returned NONE - no entities found");
             return entities;
         }
@@ -87,8 +97,7 @@ public class EntityExtractionService {
             String line = lines[i].trim();
 
             // Skip empty lines, explanatory text, and obvious non-entity lines
-            if (line.isEmpty() ||
-                    line.toLowerCase().startsWith("entities") ||
+            if (line.toLowerCase().startsWith("entities") ||
                     line.toLowerCase().startsWith("here are") ||
                     line.toLowerCase().startsWith("person abilities") ||
                     line.toLowerCase().startsWith("however") ||
@@ -138,23 +147,6 @@ public class EntityExtractionService {
         }
 
         return entities;
-    }
-
-    private String[] extractFromNaturalLanguage(String line) {
-        // Try to extract from patterns like "John Smith is a PERSON"
-        String lowerLine = line.toLowerCase();
-
-        for (String type : Set.of("person", "organization", "location", "product", "concept", "date", "number")) {
-            if (lowerLine.contains(" is a " + type) || lowerLine.contains(" is an " + type)) {
-                String name = line.substring(0, lowerLine.indexOf(" is a")).trim();
-                if (name.isEmpty()) {
-                    name = line.substring(0, lowerLine.indexOf(" is an")).trim();
-                }
-                return new String[]{name, type};
-            }
-        }
-
-        return null;
     }
 
     private String cleanEntityName(String name) {

@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +26,7 @@ public class Neo4jGraphService {
     /**
      * Save chunks + entities into Neo4j
      */
-    public void saveChunksToNeo4j(List<String> chunks, Map<String, String> metadata) {
+    public Mono<Void> saveChunksToNeo4j(List<String> chunks, Map<String, String> metadata) {
         String documentId = metadata.get("documentId");
         String documentName = metadata.get("documentName");
         String topicId = metadata.get("topicId");
@@ -32,95 +34,86 @@ public class Neo4jGraphService {
 
         log.info("Saving {} chunks to Neo4j for document={} page={}", chunks.size(), documentId, pageNo);
 
-        try {
-            // Create Document node if it doesn't exist
-            createDocumentNode(documentId, documentName, topicId);
+        return Mono.fromRunnable(() -> createDocumentNode(documentId, documentName, topicId))
+                .thenMany(Flux.fromIterable(chunks)
+                        .index()
+                        .flatMap(tuple -> {
+                            long i = tuple.getT1();
+                            String chunk = tuple.getT2();
+                            String chunkId = documentId + "_page" + pageNo + "_chunk" + i;
 
-            for (int i = 0; i < chunks.size(); i++) {
-                String chunk = chunks.get(i);
-                String chunkId = documentId + "_page" + pageNo + "_chunk" + i;
+                            return entityExtractionService.extractEntities(chunk)
+                                    .map(entities -> entities.stream()
+                                            .filter(e -> e != null &&
+                                                    e.getName() != null && !e.getName().trim().isEmpty() &&
+                                                    e.getType() != null && !e.getType().trim().isEmpty())
+                                            .collect(Collectors.toList()))
+                                    .doOnNext(entities -> {
+                                        createChunkNode(chunkId, chunk, documentId, pageNo, (int) i);
 
-                // Step 1: Create chunk node
-                createChunkNode(chunkId, chunk, documentId, pageNo, i);
+                                        for (EntityInfo entity : entities) {
+                                            try {
+                                                createEntityNode(entity);
+                                                createChunkEntityRelationship(chunkId, entity.getName(), entity.getType());
+                                            } catch (Exception e) {
+                                                log.error("Failed to process entity '{}' of type '{}': {}",
+                                                        entity.getName(), entity.getType(), e.getMessage());
+                                            }
+                                        }
 
-                // Step 2: Extract entities from chunk
-                List<EntityInfo> entities = entityExtractionService.extractEntities(chunk);
-
-                // Filter out any null or invalid entities as extra safety
-                entities = entities.stream()
-                        .filter(entity -> entity != null &&
-                                entity.getName() != null &&
-                                !entity.getName().trim().isEmpty() &&
-                                entity.getType() != null &&
-                                !entity.getType().trim().isEmpty())
-                        .collect(Collectors.toList());
-
-                log.debug("Processing {} valid entities for chunk {}", entities.size(), chunkId);
-
-                // Step 3: Create entity nodes and relationships
-                for (EntityInfo entity : entities) {
-                    try {
-                        createEntityNode(entity);
-                        createChunkEntityRelationship(chunkId, entity.getName(), entity.getType());
-                    } catch (Exception e) {
-                        log.error("Failed to process entity '{}' of type '{}': {}",
-                                entity.getName(), entity.getType(), e.getMessage());
-                        // Continue processing other entities
-                    }
-                }
-
-                // Step 4: Create relationships between entities in same chunk
-                if (entities.size() > 1) {
-                    createEntityRelationships(entities, chunkId);
-                }
-            }
-
-            log.info("✅ Successfully saved {} chunks to Neo4j", chunks.size());
-
-        } catch (Exception e) {
-            log.error("❌ Failed to save chunks to Neo4j: {}", e.getMessage(), e);
-            throw new RuntimeException("Neo4j ingestion failed", e);
-        }
+                                        if (entities.size() > 1) {
+                                            createEntityRelationships(entities, chunkId);
+                                        }
+                                    });
+                        }))
+                .then()
+                .doOnSuccess(v -> log.info("✅ Successfully saved {} chunks to Neo4j", chunks.size()))
+                .doOnError(e -> {
+                    log.error("❌ Failed to save chunks to Neo4j: {}", e.getMessage(), e);
+                    throw new RuntimeException("Neo4j ingestion failed", e);
+                });
     }
+
 
     /**
      * Given a question, extract entities and pull their relationships from Neo4j.
      */
-    public String queryRelevantEntities(String question, String documentId) {
-        try {
-            // Step 1: Extract entities from the question
-            List<EntityInfo> questionEntities = entityExtractionService.extractEntities(question);
+    public Mono<String> queryRelevantEntities(String question, String documentId) {
+        return entityExtractionService.extractEntities(question)
+                .flatMapMany(Flux::fromIterable)
+                .collectList()
+                .flatMap(questionEntities -> {
+                    if (questionEntities.isEmpty()) {
+                        log.info("No entities found in question: {}", question);
+                        return Mono.just("");
+                    }
 
-            if (questionEntities.isEmpty()) {
-                log.info("No entities found in question: {}", question);
-                return "";
-            }
+                    log.info("Found {} entities in question: {}",
+                            questionEntities.size(),
+                            questionEntities.stream().map(EntityInfo::getName).toList());
 
-            log.info("Found {} entities in question: {}", questionEntities.size(),
-                    questionEntities.stream().map(EntityInfo::getName).toList());
+                    StringBuilder contextBuilder = new StringBuilder();
 
-            // Step 2: Build Cypher query to find relevant chunks and relationships
-            StringBuilder contextBuilder = new StringBuilder();
+                    // Step 2: Collect entity context
+                    for (EntityInfo entity : questionEntities) {
+                        String entityContext = queryEntityContext(entity.getName(), documentId);
+                        if (!entityContext.isEmpty()) {
+                            contextBuilder.append(entityContext).append("\n\n");
+                        }
+                    }
 
-            for (EntityInfo entity : questionEntities) {
-                String entityContext = queryEntityContext(entity.getName(), documentId);
-                if (!entityContext.isEmpty()) {
-                    contextBuilder.append(entityContext).append("\n\n");
-                }
-            }
+                    // Step 3: Collect relationships between entities
+                    String relationshipContext = queryEntityRelationships(questionEntities, documentId);
+                    if (!relationshipContext.isEmpty()) {
+                        contextBuilder.append("Relationships:\n").append(relationshipContext);
+                    }
 
-            // Step 3: Also get relationships between the question entities
-            String relationshipContext = queryEntityRelationships(questionEntities, documentId);
-            if (!relationshipContext.isEmpty()) {
-                contextBuilder.append("Relationships:\n").append(relationshipContext);
-            }
-
-            return contextBuilder.toString();
-
-        } catch (Exception e) {
-            log.error("❌ Failed to query entities from Neo4j: {}", e.getMessage(), e);
-            return "";
-        }
+                    return Mono.just(contextBuilder.toString());
+                })
+                .onErrorResume(e -> {
+                    log.error("❌ Failed to query entities from Neo4j: {}", e.getMessage(), e);
+                    return Mono.just("");
+                });
     }
 
     private void createDocumentNode(String documentId, String documentName, String topicId) {
