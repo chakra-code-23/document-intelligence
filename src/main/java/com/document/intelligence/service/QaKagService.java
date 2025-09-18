@@ -26,7 +26,7 @@ public class QaKagService {
         String question = request.getQuestion();
         String documentId = request.getDocumentId();
 
-        return graphService.queryRelevantEntities(question, documentId) // already Mono<String>
+        return sanitizeText(graphService.queryRelevantEntities(question, documentId))// already Mono<String>
                 .flatMap(graphContext -> {
                     log.info("Retrieved graph context length: {}", graphContext.length());
 
@@ -37,7 +37,7 @@ public class QaKagService {
 
                     String prompt = buildKagPrompt(question, graphContext);
 
-                    return claudeApiService.callClaudeReactive(prompt)
+                    return sanitizeText(claudeApiService.callClaudeReactive(prompt))
                             .map(kagAnswer -> {
                                 log.info("✅ KAG answer generated successfully");
                                 return new AnswerResponse(kagAnswer, List.of(graphContext));
@@ -49,26 +49,43 @@ public class QaKagService {
                 });
     }
 
+    private Mono<String> sanitizeText(Mono<String> inputMono) {
+        return inputMono
+                .map(input -> {
+                    if (input == null) {
+                        return "";
+                    }
+                    String result = input;
+                    result = result.replace("\"", "\\\"");
+                    result = result.replaceAll("\\n+", " ");    // replace newlines
+                    result = result.replaceAll("\\s{2,}", " "); // collapse spaces
+                    return result.trim();
+                })
+                .onErrorResume(e -> {
+                    // fallback in case of exception
+                    return Mono.just("");
+                });
+    }
+
 
     private String buildKagPrompt(String question, String graphContext) {
         return """
-            You are a knowledgeable assistant with access to a knowledge graph containing entities and their relationships from documents.
-            
-            Use the following knowledge graph context to answer the question. The context contains entities mentioned in the documents and their relationships.
-            
-            KNOWLEDGE GRAPH CONTEXT:
-            %s
-            
-            QUESTION: %s
-            
-            INSTRUCTIONS:
-            - Use the knowledge graph information to provide a comprehensive answer
-            - Reference specific entities and relationships when relevant
-            - If the graph context doesn't fully answer the question, acknowledge what information is available
-            - Be clear about the connections between entities
-            - Provide a structured and informative response
-            
-            ANSWER:
-            """.formatted(graphContext, question);
+        You are a knowledgeable assistant with access to a knowledge graph of entities and their relationships.
+
+        KNOWLEDGE GRAPH CONTEXT:
+        %s
+
+        QUESTION: %s
+
+        INSTRUCTIONS:
+        - Use the context as evidence for your answer
+        - If entities are detected but context is missing, acknowledge it briefly and still attempt a concise answer
+        - If relationships are shown, highlight them as the main evidence
+        - Do NOT repeat phrases like "no context found" verbatim; instead, summarize clearly what is missing
+        - Keep your answer direct and avoid speculation beyond the graph
+
+        ANSWER:
+        """.formatted(graphContext, question);
     }
+
 }
