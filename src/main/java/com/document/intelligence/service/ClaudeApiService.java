@@ -13,6 +13,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -31,7 +32,7 @@ public class ClaudeApiService {
             log.debug("Calling Claude API with prompt length: {}", prompt.length());
 
             return webClient.post()
-                    .uri("v1/messages") // relative path, since baseUrl is apiUrl
+                    .uri("v1/messages")
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
                     .header("Content-Type", "application/json")

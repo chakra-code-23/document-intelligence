@@ -19,25 +19,5 @@ public class LangChainOllamaService {
         return chatModel.generate(question);
     }
 
-    /**
-     * RAG-style answer generation using retrieved context
-     */
-    public String generateAnswer(String question, List<String> context) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("You are a helpful assistant. Use the following context to answer the question.\n\n");
-
-        for (int i = 0; i < context.size(); i++) {
-            prompt.append("Context ").append(i + 1).append(": ").append(context.get(i)).append("\n");
-        }
-
-        prompt.append("\nQuestion: ").append(question).append("\n");
-        prompt.append("Answer in clear and concise English.");
-
-        // Use UserMessage so we have flexibility
-        Response<AiMessage> response = chatModel.generate(List.of(UserMessage.from(prompt.toString())));
-
-        return response.content().text();
-    }
-
 }
 

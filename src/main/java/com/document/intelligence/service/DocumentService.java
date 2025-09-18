@@ -75,7 +75,7 @@ public class DocumentService {
                                 )
                                 // 6) After parsing → ingest → completion → combine both into Map
                                 .flatMap(parsedResponse ->
-                                        Mono.fromRunnable(() -> ingestionService.ingest(parsedResponse, filePart.filename(), topicId))
+                                        ingestionService.ingest(parsedResponse, filePart.filename(), topicId)  // <- return the reactive pipeline
                                                 .doOnSuccess(v -> log.info("✅ Ingestion successful for documentId={}", parsedResponse.getDocumentId()))
                                                 .doOnError(err -> log.error("❌ Ingestion failed for documentId={}: {}", parsedResponse.getDocumentId(), err.getMessage(), err))
                                                 .then(
@@ -93,6 +93,7 @@ public class DocumentService {
                                                 .doOnSuccess(comp -> log.info("✅ Completion + Parsed chunks combined for documentId={}", parsedResponse.getDocumentId()))
                                                 .doOnError(err -> log.error("❌ Failed combining completion + parsed chunks for documentId={}: {}", parsedResponse.getDocumentId(), err.getMessage(), err))
                                 )
+
                 )
                 .doOnError(err -> log.error("processDocument failed for documentId={}: {}", documentId, err.getMessage(), err));
     }
