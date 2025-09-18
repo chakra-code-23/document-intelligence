@@ -16,6 +16,7 @@ import java.util.List;
 public class ParsingService {
 
     private final LangChainOllamaService llmService;
+    private final ClaudeApiService claudeApiService;
 
     public Mono<SplitResponse> parseDocument(SplitResponse splitResponse) {
         log.info("Starting parsing with LLM for documentId={}", splitResponse.getDocumentId());
@@ -48,7 +49,7 @@ public class ParsingService {
                     log.debug("Sending chunk {} of page {} to LLM (documentId={})",
                             i + 1, page.getPageNo(), splitResponse.getDocumentId());
 
-                    String parsed = llmService.askLangLlama(prompt);
+                    String parsed = claudeApiService.callClaude(prompt);
 
                     parsedChunks.add(parsed != null ? parsed : "");
 

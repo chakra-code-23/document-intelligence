@@ -18,6 +18,7 @@ public class CompletionService {
 
     private final LangChainOllamaService llmService;
     private final DbService dbService;
+    private final ClaudeApiService claudeApiService;
 
     public Mono<CompletionResponse> generateCompletion(SplitResponse splitResponse, String topicId, String documentId) {
         log.info("Starting completion for documentId={}", documentId);
@@ -40,7 +41,7 @@ public class CompletionService {
 
                     log.info("Calling LLM to extract summary for documentId={}", documentId);
 
-                    String summary = llmService.askLangLlama(summaryPrompt);
+                    String summary = claudeApiService.callClaude(summaryPrompt);
 
                     log.info("Summary extracted successfully for documentId={}", documentId);
 
@@ -56,7 +57,7 @@ public class CompletionService {
 
                     log.info("Calling LLM to generate questions for documentId={}", documentId);
 
-                    String questionsRaw = llmService.askLangLlama(questionsPrompt);
+                    String questionsRaw = claudeApiService.callClaude(questionsPrompt);
 
                     log.info("Questions generated successfully for documentId={}", documentId);
 

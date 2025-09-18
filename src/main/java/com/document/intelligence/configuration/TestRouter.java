@@ -2,12 +2,15 @@ package com.document.intelligence.configuration;
 
 
 import com.document.intelligence.handler.TestHandler;
+import com.document.intelligence.service.ClaudeApiService;
 import com.document.intelligence.service.LangChainOllamaService;
 import com.document.intelligence.service.LlmService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerResponse;
+
+import java.util.Map;
 
 import static org.springframework.web.reactive.function.server.RequestPredicates.POST;
 import static org.springframework.web.reactive.function.server.RouterFunctions.route;
@@ -59,6 +62,28 @@ public class TestRouter {
     public RouterFunction<ServerResponse> pineconeRoutes(TestHandler testHandler) {
         return route()
                 .POST("/api/test-pinecone", testHandler::testPinecone)
+                .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> claudeTest(ClaudeApiService claudeApiService) {
+        return route()
+                .GET("/api/test-claude", req -> {
+                    String prompt = req.queryParam("prompt").orElse("Say hello from Claude API!");
+
+                    return claudeApiService.callClaudeReactive(prompt)
+                            .flatMap(response -> ServerResponse.ok().bodyValue(Map.of(
+                                    "status", "success",
+                                    "prompt", prompt,
+                                    "response", response,
+                                    "timestamp", System.currentTimeMillis()
+                            )))
+                            .onErrorResume(error -> ServerResponse.status(500).bodyValue(Map.of(
+                                    "status", "error",
+                                    "message", error.getMessage(),
+                                    "timestamp", System.currentTimeMillis()
+                            )));
+                })
                 .build();
     }
 
