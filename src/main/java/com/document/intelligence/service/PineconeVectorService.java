@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.Map;
@@ -58,11 +59,17 @@ public class PineconeVectorService {
      * @param chunks   list of text chunks
      * @param metadata map of metadata (docId, topicId, pageNo, etc.)
      */
+
     public Mono<Void> saveChunksToPineCone(List<String> chunks, Map<String, String> metadata) {
         if (chunks == null || chunks.isEmpty()) {
-            log.warn("No chunks provided for Pinecone storage");
+            log.warn("⚠️ No chunks provided for Pinecone storage");
             return Mono.empty();
         }
+
+        String docId = metadata.get("documentId");
+        String pageNo = metadata.get("pageNo");
+
+        log.info("📥 Saving {} chunks to Pinecone for docId={} page={}", chunks.size(), docId, pageNo);
 
         return Flux.fromIterable(IntStream.range(0, chunks.size()).boxed().toList())
                 .flatMap(i -> {
@@ -72,34 +79,32 @@ public class PineconeVectorService {
 
                     TextSegment segment = TextSegment.from(chunks.get(i), md);
 
-                    // Generate embedding (still sync, so wrap in Mono.fromCallable)
+                    // Step 1: Embed the chunk (blocking -> run on elastic)
                     return Mono.fromCallable(() -> embeddingModel.embed(segment).content())
-                            .map(embedding -> Map.of(
-                                    "embedding", embedding,
-                                    "segment", segment
-                            ));
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .map(embedding -> Map.of("embedding", embedding, "segment", segment));
                 })
                 .flatMap(entry -> {
                     Embedding embedding = (Embedding) entry.get("embedding");
                     TextSegment segment = (TextSegment) entry.get("segment");
 
-                    return Mono.fromRunnable(() -> {
+                    // Step 2: Store in Pinecone (blocking -> run on elastic)
+                    return Mono.fromCallable(() -> {
                         String id = UUID.randomUUID().toString();
                         embeddingStore.add(embedding, segment);
 
-                        String pageNo = segment.metadata().get("pageNo");
-                        String chunkIndex = segment.metadata().get("chunkIndex");
-
-                        log.info("Stored chunk (pageNo={}, chunkIndex={}) in Pinecone with ID={} (docId={}, topicId={})",
-                                pageNo, chunkIndex, id,
+                        log.debug("Pinecone: stored chunk docId={} pageNo={} chunkIndex={} id={}",
                                 segment.metadata().get("documentId"),
-                                segment.metadata().get("topicId"));
-                    });
+                                segment.metadata().get("pageNo"),
+                                segment.metadata().get("chunkIndex"),
+                                id);
+
+                        return id;
+                    }).subscribeOn(Schedulers.boundedElastic());
                 })
                 .then()
-                .doOnSuccess(v -> log.info("✅ Successfully stored {} chunks for docId={} into Pinecone",
-                        chunks.size(), metadata.get("documentId")))
-                .doOnError(e -> log.error("❌ Pinecone ingestion failed: {}", e.getMessage(), e));
+                .doOnSuccess(v -> log.info("✅ Pinecone finished saving {} chunks for docId={} page={}", chunks.size(), docId, pageNo))
+                .doOnError(e -> log.error("❌ Pinecone ingestion failed for docId={} page={}: {}", docId, pageNo, e.getMessage(), e));
     }
 
 }

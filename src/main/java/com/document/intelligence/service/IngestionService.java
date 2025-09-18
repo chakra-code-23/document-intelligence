@@ -47,18 +47,22 @@ public class IngestionService {
                         return Mono.error(new IllegalArgumentException("❌ Missing required metadata"));
                     }
 
-                    log.info("Ingesting {} chunks for docId={} topicId={} pageNo={}",
+                    log.info("🚀 Ingesting {} chunks for docId={} topicId={} pageNo={}",
                             chunks.size(), documentId, topicId, pageNo);
 
-                    // ✅ Both services are now reactive
-                    Mono<Void> pineconeIngest = pineconeVectorService.saveChunksToPineCone(chunks, metadata);
-                    Mono<Void> neo4jIngest = neo4jGraphService.saveChunksToNeo4j(chunks, metadata);
+                    Mono<Void> pineconeIngest = pineconeVectorService.saveChunksToPineCone(chunks, metadata)
+                            .doOnSuccess(v -> log.info("✅ Pinecone ingestion complete for page={} docId={}", pageNo, documentId));
 
-                    return Mono.when(pineconeIngest, neo4jIngest);
+                    Mono<Void> neo4jIngest = neo4jGraphService.saveChunksToNeo4j(chunks, metadata)
+                            .doOnSuccess(v -> log.info("✅ Neo4j ingestion complete for page={} docId={}", pageNo, documentId));
+
+                    return Mono.when(pineconeIngest, neo4jIngest)
+                            .doOnSuccess(v -> log.info("🎯 Both Pinecone + Neo4j done for page={} docId={}", pageNo, documentId));
                 })
                 .then()
-                .doOnSuccess(v -> log.info("✅ Finished ingestion for documentId={}", documentId))
+                .doOnSuccess(v -> log.info("🏁 Finished ingestion for documentId={} into BOTH Pinecone + Neo4j", documentId))
                 .doOnError(e -> log.error("❌ Ingestion failed for documentId={}: {}", documentId, e.getMessage(), e));
     }
+
 
 }

@@ -5,6 +5,7 @@ import com.document.intelligence.dto.EntityInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.neo4j.core.Neo4jClient;
+import org.springframework.data.neo4j.core.ReactiveNeo4jClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -20,7 +21,7 @@ import java.util.stream.IntStream;
 @Slf4j
 public class Neo4jGraphService {
 
-    private final Neo4jClient neo4jClient;
+    private final ReactiveNeo4jClient neo4jClient;
     private final EntityExtractionService entityExtractionService;
 
     /**
@@ -34,7 +35,7 @@ public class Neo4jGraphService {
 
         log.info("Saving {} chunks to Neo4j for document={} page={}", chunks.size(), documentId, pageNo);
 
-        return Mono.fromRunnable(() -> createDocumentNode(documentId, documentName, topicId))
+        return createDocumentNode(documentId, documentName, topicId)
                 .thenMany(Flux.fromIterable(chunks)
                         .index()
                         .flatMap(tuple -> {
@@ -43,28 +44,25 @@ public class Neo4jGraphService {
                             String chunkId = documentId + "_page" + pageNo + "_chunk" + i;
 
                             return entityExtractionService.extractEntities(chunk)
-                                    .map(entities -> entities.stream()
-                                            .filter(e -> e != null &&
-                                                    e.getName() != null && !e.getName().trim().isEmpty() &&
-                                                    e.getType() != null && !e.getType().trim().isEmpty())
-                                            .collect(Collectors.toList()))
-                                    .doOnNext(entities -> {
-                                        createChunkNode(chunkId, chunk, documentId, pageNo, (int) i);
-
-                                        for (EntityInfo entity : entities) {
-                                            try {
-                                                createEntityNode(entity);
-                                                createChunkEntityRelationship(chunkId, entity.getName(), entity.getType());
-                                            } catch (Exception e) {
-                                                log.error("Failed to process entity '{}' of type '{}': {}",
-                                                        entity.getName(), entity.getType(), e.getMessage());
-                                            }
-                                        }
-
-                                        if (entities.size() > 1) {
-                                            createEntityRelationships(entities, chunkId);
-                                        }
-                                    });
+                                    .flatMapMany(Flux::fromIterable)
+                                    .filter(e -> e != null &&
+                                            e.getName() != null && !e.getName().trim().isEmpty() &&
+                                            e.getType() != null && !e.getType().trim().isEmpty())
+                                    .collectList()
+                                    .flatMap(entities ->
+                                            createChunkNode(chunkId, chunk, documentId, pageNo, (int) i)
+                                                    .thenMany(Flux.fromIterable(entities)
+                                                            .flatMap(entity ->
+                                                                    createEntityNode(entity)
+                                                                            .then(createChunkEntityRelationship(chunkId, entity.getName(), entity.getType()))
+                                                            )
+                                                    )
+                                                    .thenMany(entities.size() > 1
+                                                            ? createEntityRelationships(entities, chunkId)
+                                                            : Flux.empty()
+                                                    )
+                                                    .then()
+                                    );
                         }))
                 .then()
                 .doOnSuccess(v -> log.info("✅ Successfully saved {} chunks to Neo4j", chunks.size()))
@@ -92,23 +90,30 @@ public class Neo4jGraphService {
                             questionEntities.size(),
                             questionEntities.stream().map(EntityInfo::getName).toList());
 
-                    StringBuilder contextBuilder = new StringBuilder();
+                    // Step 2: Collect entity contexts reactively
+                    Mono<String> contextsMono = Flux.fromIterable(questionEntities)
+                            .flatMap(entity -> queryEntityContext(entity.getName(), documentId)) // Mono<String> per entity
+                            .collectList()
+                            .map(contexts -> String.join("\n\n", contexts));
 
-                    // Step 2: Collect entity context
-                    for (EntityInfo entity : questionEntities) {
-                        String entityContext = queryEntityContext(entity.getName(), documentId);
-                        if (!entityContext.isEmpty()) {
-                            contextBuilder.append(entityContext).append("\n\n");
-                        }
-                    }
+                    // Step 3: Collect relationships reactively
+                    Mono<String> relationshipsMono = queryEntityRelationships(questionEntities, documentId);
 
-                    // Step 3: Collect relationships between entities
-                    String relationshipContext = queryEntityRelationships(questionEntities, documentId);
-                    if (!relationshipContext.isEmpty()) {
-                        contextBuilder.append("Relationships:\n").append(relationshipContext);
-                    }
+                    // Combine both
+                    return Mono.zip(contextsMono, relationshipsMono)
+                            .map(tuple -> {
+                                String contexts = tuple.getT1();
+                                String relationships = tuple.getT2();
 
-                    return Mono.just(contextBuilder.toString());
+                                StringBuilder sb = new StringBuilder();
+                                if (!contexts.isEmpty()) {
+                                    sb.append(contexts).append("\n\n");
+                                }
+                                if (!relationships.isEmpty()) {
+                                    sb.append("Relationships:\n").append(relationships);
+                                }
+                                return sb.toString();
+                            });
                 })
                 .onErrorResume(e -> {
                     log.error("❌ Failed to query entities from Neo4j: {}", e.getMessage(), e);
@@ -116,146 +121,173 @@ public class Neo4jGraphService {
                 });
     }
 
-    private void createDocumentNode(String documentId, String documentName, String topicId) {
+
+    private Mono<Void> createChunkNode(String chunkId, String content, String documentId, String pageNo, int chunkIndex) {
         String cypher = """
-            MERGE (d:Document {id: $documentId})
-            SET d.name = $documentName, d.topicId = $topicId, d.createdAt = datetime()
-            """;
+        MERGE (c:Chunk {id: $chunkId})
+        SET c.content = $content, c.pageNo = $pageNo, c.chunkIndex = $chunkIndex, c.createdAt = datetime()
+        WITH c
+        MATCH (d:Document {id: $documentId})
+        MERGE (d)-[:HAS_CHUNK]->(c)
+        """;
 
-        neo4jClient.query(cypher)
-                .bind(documentId).to("documentId")
-                .bind(documentName).to("documentName")
-                .bind(topicId).to("topicId")
-                .run();
-    }
-
-    private void createChunkNode(String chunkId, String content, String documentId, String pageNo, int chunkIndex) {
-        String cypher = """
-            MERGE (c:Chunk {id: $chunkId})
-            SET c.content = $content, c.pageNo = $pageNo, c.chunkIndex = $chunkIndex, c.createdAt = datetime()
-            WITH c
-            MATCH (d:Document {id: $documentId})
-            MERGE (d)-[:HAS_CHUNK]->(c)
-            """;
-
-        neo4jClient.query(cypher)
+        return neo4jClient.query(cypher)
                 .bind(chunkId).to("chunkId")
                 .bind(content).to("content")
                 .bind(documentId).to("documentId")
                 .bind(pageNo).to("pageNo")
                 .bind(chunkIndex).to("chunkIndex")
-                .run();
+                .run()
+                .then()
+                .doOnSuccess(v -> log.debug("Neo4j: Created Chunk node id={} for docId={} pageNo={}", chunkId, documentId, pageNo));
     }
 
-    private void createEntityNode(EntityInfo entity) {
+    private Mono<Void> createEntityNode(EntityInfo entity) {
         String cypher = """
-            MERGE (e:Entity {name: $name})
-            SET e.type = $type, e.updatedAt = datetime()
-            """;
+        MERGE (e:Entity {name: $name})
+        SET e.type = $type, e.updatedAt = datetime()
+        """;
 
-        neo4jClient.query(cypher)
+        return neo4jClient.query(cypher)
                 .bind(entity.getName()).to("name")
                 .bind(entity.getType()).to("type")
-                .run();
+                .run()
+                .then()
+                .doOnSuccess(v -> log.debug("Neo4j: Created/Updated Entity node name={} type={}", entity.getName(), entity.getType()));
     }
 
-    private void createChunkEntityRelationship(String chunkId, String entityName, String entityType) {
+    private Mono<Void> createChunkEntityRelationship(String chunkId, String entityName, String entityType) {
         String cypher = """
-            MATCH (c:Chunk {id: $chunkId})
-            MATCH (e:Entity {name: $entityName})
-            MERGE (c)-[r:MENTIONS]->(e)
-            SET r.entityType = $entityType
-            """;
+        MATCH (c:Chunk {id: $chunkId})
+        MATCH (e:Entity {name: $entityName})
+        MERGE (c)-[r:MENTIONS]->(e)
+        SET r.entityType = $entityType
+        """;
 
-        neo4jClient.query(cypher)
+        return neo4jClient.query(cypher)
                 .bind(chunkId).to("chunkId")
                 .bind(entityName).to("entityName")
                 .bind(entityType).to("entityType")
-                .run();
+                .run()
+                .then()
+                .doOnSuccess(v -> log.debug("Neo4j: Linked Chunk {} -> Entity {} [{}]", chunkId, entityName, entityType));
     }
 
-    private void createEntityRelationships(List<EntityInfo> entities, String chunkId) {
+    private Flux<Void> createEntityRelationships(List<EntityInfo> entities, String chunkId) {
         // Create co-occurrence relationships between entities in the same chunk
-        for (int i = 0; i < entities.size(); i++) {
-            for (int j = i + 1; j < entities.size(); j++) {
-                EntityInfo entity1 = entities.get(i);
-                EntityInfo entity2 = entities.get(j);
+        return Flux.range(0, entities.size())
+                .flatMap(i -> Flux.range(i + 1, entities.size() - (i + 1))
+                        .flatMap(j -> {
+                            EntityInfo entity1 = entities.get(i);
+                            EntityInfo entity2 = entities.get(j);
 
-                String cypher = """
-                    MATCH (e1:Entity {name: $entity1})
-                    MATCH (e2:Entity {name: $entity2})
-                    MERGE (e1)-[r:CO_OCCURS_WITH]-(e2)
-                    SET r.chunkId = $chunkId, r.lastSeen = datetime()
-                    """;
+                            String cypher = """
+                            MATCH (e1:Entity {name: $entity1})
+                            MATCH (e2:Entity {name: $entity2})
+                            MERGE (e1)-[r:CO_OCCURS_WITH]-(e2)
+                            SET r.chunkId = $chunkId, r.lastSeen = datetime()
+                            """;
 
-                neo4jClient.query(cypher)
-                        .bind(entity1.getName()).to("entity1")
-                        .bind(entity2.getName()).to("entity2")
-                        .bind(chunkId).to("chunkId")
-                        .run();
-            }
-        }
+                            return neo4jClient.query(cypher)
+                                    .bind(entity1.getName()).to("entity1")
+                                    .bind(entity2.getName()).to("entity2")
+                                    .bind(chunkId).to("chunkId")
+                                    .run()
+                                    .then()
+                                    .doOnSuccess(v -> log.debug("Neo4j: Linked Entity {} <-> {} in chunk {}", entity1.getName(), entity2.getName(), chunkId));
+                        })
+                );
     }
 
-    private String queryEntityContext(String entityName, String documentId) {
+    private Mono<String> queryEntityContext(String entityName, String documentId) {
         String cypher = """
-            MATCH (d:Document {id: $documentId})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity {name: $entityName})
-            RETURN c.content as content, c.pageNo as pageNo, c.chunkIndex as chunkIndex
-            ORDER BY c.pageNo, c.chunkIndex
-            LIMIT 5
-            """;
+        MATCH (d:Document {id: $documentId})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity {name: $entityName})
+        RETURN c.content as content, c.pageNo as pageNo, c.chunkIndex as chunkIndex
+        ORDER BY c.pageNo, c.chunkIndex
+        LIMIT 5
+        """;
 
-        var result = neo4jClient.query(cypher)
+        return neo4jClient.query(cypher)
                 .bind(documentId).to("documentId")
                 .bind(entityName).to("entityName")
-                .fetch().all();
+                .fetch()
+                .all()
+                .collectList()
+                .map(records -> {
+                    StringBuilder context = new StringBuilder();
+                    context.append("Entity '").append(entityName).append("' context:\n");
 
-        StringBuilder context = new StringBuilder();
-        context.append("Entity '").append(entityName).append("' context:\n");
+                    for (var record : records) {
+                        String content = (String) record.get("content");
+                        String pageNo = (String) record.get("pageNo");
 
-        for (var record : result) {
-            String content = (String) record.get("content");
-            String pageNo = (String) record.get("pageNo");
-            // Fix casting issue - Neo4j returns Long, not Integer
-            Number chunkIndexNumber = (Number) record.get("chunkIndex");
-            int chunkIndex = chunkIndexNumber.intValue();
+                        Number chunkIndexNumber = (Number) record.get("chunkIndex");
+                        int chunkIndex = chunkIndexNumber.intValue();
 
-            context.append("Page ").append(pageNo).append(", Chunk ").append(chunkIndex)
-                    .append(": ").append(content).append("\n");
-        }
+                        context.append("Page ").append(pageNo).append(", Chunk ").append(chunkIndex)
+                                .append(": ").append(content).append("\n");
+                    }
 
-        return context.toString();
+                    return context.toString();
+                });
     }
 
-    private String queryEntityRelationships(List<EntityInfo> entities, String documentId) {
-        if (entities.size() < 2) return "";
+
+    private Mono<String> queryEntityRelationships(List<EntityInfo> entities, String documentId) {
+        if (entities.size() < 2) {
+            return Mono.just("");
+        }
 
         List<String> entityNames = entities.stream().map(EntityInfo::getName).toList();
 
         String cypher = """
-            MATCH (d:Document {id: $documentId})-[:HAS_CHUNK]->(c:Chunk)
-            WHERE any(entity IN $entityNames WHERE (c)-[:MENTIONS]->(:Entity {name: entity}))
-            WITH c
-            MATCH (c)-[:MENTIONS]->(e1:Entity)
-            MATCH (c)-[:MENTIONS]->(e2:Entity)
-            WHERE e1.name IN $entityNames AND e2.name IN $entityNames AND e1.name < e2.name
-            RETURN DISTINCT e1.name as entity1, e2.name as entity2, collect(c.content) as contexts
-            """;
+        MATCH (d:Document {id: $documentId})-[:HAS_CHUNK]->(c:Chunk)
+        WHERE any(entity IN $entityNames WHERE (c)-[:MENTIONS]->(:Entity {name: entity}))
+        WITH c
+        MATCH (c)-[:MENTIONS]->(e1:Entity)
+        MATCH (c)-[:MENTIONS]->(e2:Entity)
+        WHERE e1.name IN $entityNames AND e2.name IN $entityNames AND e1.name < e2.name
+        RETURN DISTINCT e1.name as entity1, e2.name as entity2, collect(c.content) as contexts
+        """;
 
-        var result = neo4jClient.query(cypher)
+        return neo4jClient.query(cypher)
                 .bind(documentId).to("documentId")
                 .bind(entityNames).to("entityNames")
-                .fetch().all();
+                .fetch()
+                .all()
+                .collectList()
+                .map(records -> {
+                    StringBuilder relationships = new StringBuilder();
+                    for (var record : records) {
+                        String entity1 = (String) record.get("entity1");
+                        String entity2 = (String) record.get("entity2");
 
-        StringBuilder relationships = new StringBuilder();
-        for (var record : result) {
-            String entity1 = (String) record.get("entity1");
-            String entity2 = (String) record.get("entity2");
-
-            relationships.append(entity1).append(" is related to ").append(entity2)
-                    .append(" in the document context.\n");
-        }
-
-        return relationships.toString();
+                        relationships.append(entity1)
+                                .append(" is related to ")
+                                .append(entity2)
+                                .append(" in the document context.\n");
+                    }
+                    return relationships.toString();
+                });
     }
+
+    private Mono<Void> createDocumentNode(String documentId, String documentName, String topicId) {
+        String cypher = """
+    MERGE (d:Document {id: $documentId})
+    SET d.name = $documentName,
+        d.topicId = $topicId,
+        d.updatedAt = datetime()
+    """;
+
+        return neo4jClient.query(cypher)
+                .bind(documentId).to("documentId")
+                .bind(documentName).to("documentName")
+                .bind(topicId).to("topicId")
+                .run()
+                .then()
+                .doOnSuccess(v -> log.debug("Neo4j: Created/Updated Document node id={} name={} topicId={}",
+                        documentId, documentName, topicId));
+    }
+
+
 }
