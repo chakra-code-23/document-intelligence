@@ -33,10 +33,10 @@ public class ParsingService {
                 String chunk = page.getChunks().get(i);
 
                 // Escape quotes inside the chunk
-                String safeChunk = chunk.replace("\"", "\\\"");
+                String safeChunk = sanitizeText(chunk, true);
 
                 String prompt =
-                                "You are a precise text extraction and translation engine. " +
+                        "You are a precise text extraction and translation engine. " +
                                 "From the following chunk, return ONLY clean, meaningful English text. " +
                                 "If there is any non-English text (such as Sanskrit, Hindi, verses, or symbols), " +
                                 "translate it into natural English and replace it. " +
@@ -49,9 +49,8 @@ public class ParsingService {
                     log.debug("Sending chunk {} of page {} to LLM (documentId={})",
                             i + 1, page.getPageNo(), splitResponse.getDocumentId());
 
-                    String parsed = claudeApiService.callClaude(prompt);
-
-                    parsedChunks.add(parsed != null ? parsed : "");
+                    String parsed = sanitizeText(claudeApiService.callClaude(prompt), false);
+                    parsedChunks.add(parsed);
 
                     log.debug("✅ Parsed chunk {} of page {} successfully (documentId={})",
                             i + 1, page.getPageNo(), splitResponse.getDocumentId());
@@ -73,4 +72,32 @@ public class ParsingService {
 
         return Mono.just(new SplitResponse(splitResponse.getDocumentId(), parsedPages));
     }
+
+    /**
+     * Utility to clean and normalize text before/after sending to LLM.
+     * - Escapes double quotes for safe JSON/prompt inclusion.
+     * - Normalizes whitespace (remove newlines, collapse spaces).
+     * - Handles null input safely.
+     */
+    private String sanitizeText(String input, boolean escapeQuotes) {
+        if (input == null) {
+            return "";
+        }
+
+        String result = input;
+
+        // Step 1: escape quotes if required
+        if (escapeQuotes) {
+            result = result.replace("\"", "\\\"");
+        }
+
+        // Step 2: normalize whitespace
+        result = result.replaceAll("\\n+", " ");    // replace newlines with space
+        result = result.replaceAll("\\s{2,}", " "); // collapse multiple spaces
+
+        // Step 3: trim
+        return result.trim();
+    }
+
+
 }
