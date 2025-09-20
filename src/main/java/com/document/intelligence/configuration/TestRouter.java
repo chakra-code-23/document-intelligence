@@ -1,6 +1,7 @@
 package com.document.intelligence.configuration;
 
 
+import com.document.intelligence.handler.DebugHandler;
 import com.document.intelligence.handler.TestHandler;
 import com.document.intelligence.service.ClaudeApiService;
 import com.document.intelligence.service.LangChainOllamaService;
@@ -8,10 +9,12 @@ import com.document.intelligence.service.LlmService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.server.RouterFunction;
+import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerResponse;
 
 import java.util.Map;
 
+import static org.springframework.web.reactive.function.server.RequestPredicates.GET;
 import static org.springframework.web.reactive.function.server.RequestPredicates.POST;
 import static org.springframework.web.reactive.function.server.RouterFunctions.route;
 
@@ -85,6 +88,14 @@ public class TestRouter {
                             )));
                 })
                 .build();
+    }
+
+    @Bean
+    public RouterFunction<ServerResponse> debugRoutes(DebugHandler debugHandler) {
+        return RouterFunctions
+                .route(GET("/api/debug/database/{documentId}"), debugHandler::debugDatabase)
+                .andRoute(GET("/api/debug/database"), debugHandler::debugAllDatabase)
+                .andRoute(GET("/api/debug/find-venkateswara"), debugHandler::findSriVenkateswaraContent);
     }
 
 }

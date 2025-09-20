@@ -53,27 +53,24 @@ public class EntityExtractionService {
 
     private String buildEntityExtractionPrompt(String text) {
         return """
-            TASK: Find and extract named entities that are ACTUALLY PRESENT in the text below. Do NOT generate, invent, or hallucinate any entities.
-            
-            CRITICAL RULE: Only extract entities that appear EXACTLY in the given text. Do not add entities from your knowledge or memory.
-            
-            VALID TYPES: PERSON, ORGANIZATION, LOCATION, PRODUCT, CONCEPT, DATE, NUMBER, SKILL
-            
-            STRICT INSTRUCTIONS:
-            - Read the text carefully
-            - Only identify entities that are literally written in the text
-            - Return format: ENTITY_NAME|ENTITY_TYPE
-            - One entity per line
-            - If no entities exist in the text, return "NONE"
-            - Do NOT add information not in the text
-            - Do NOT use your knowledge to expand entities
-            
-            TEXT TO ANALYZE:
-            "%s"
-            
-            ENTITIES FOUND IN THE TEXT:
-            """.formatted(text.trim());
+        TASK: Extract named entities ACTUALLY PRESENT in the text below. 
+        Do NOT hallucinate or invent entities.
+
+        VALID TYPES: PERSON, ORGANIZATION, LOCATION, DYNASTY, STRUCTURE, EVENT, ROLE, PRODUCT, CONCEPT, DATE, NUMBER, SKILL
+
+        STRICT INSTRUCTIONS:
+        - Only extract entities explicitly mentioned in the text
+        - Return format: ENTITY_NAME|ENTITY_TYPE
+        - One entity per line
+        - If none exist, return "NONE"
+
+        TEXT TO ANALYZE:
+        "%s"
+
+        ENTITIES FOUND IN THE TEXT:
+        """.formatted(text.trim());
     }
+
 
     private List<EntityInfo> parseEntityResponse(String response) {
         List<EntityInfo> entities = new ArrayList<>();
@@ -290,7 +287,11 @@ public class EntityExtractionService {
             return false;
         }
 
-        Set<String> validTypes = Set.of("PERSON", "ORGANIZATION", "LOCATION", "PRODUCT", "CONCEPT", "DATE", "NUMBER");
+        Set<String> validTypes = Set.of(
+                "PERSON", "ORGANIZATION", "LOCATION", "DYNASTY", "STRUCTURE",
+                "EVENT", "ROLE", "PRODUCT", "CONCEPT", "DATE", "NUMBER", "SKILL"
+        );
+
         boolean isValid = validTypes.contains(type.trim().toUpperCase());
 
         if (!isValid) {
@@ -299,4 +300,5 @@ public class EntityExtractionService {
 
         return isValid;
     }
+
 }
