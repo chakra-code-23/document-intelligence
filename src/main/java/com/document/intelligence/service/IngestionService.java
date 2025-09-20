@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -28,7 +29,7 @@ public class IngestionService {
         String documentId = splitResponse.getDocumentId();
 
         return Flux.fromIterable(splitResponse.getPages())
-                .flatMap(page -> {
+                .concatMap(page -> {
                     List<String> chunks = page.getChunks();
                     String pageNo = String.valueOf(page.getPageNo());
 
@@ -37,32 +38,29 @@ public class IngestionService {
                         return Mono.empty();
                     }
 
+                    if (documentId == null || topicId == null) {
+                        return Mono.error(new IllegalArgumentException("❌ Missing required metadata"));
+                    }
+
                     Map<String, String> metadata = new HashMap<>();
                     metadata.put("documentId", documentId);
                     metadata.put("documentName", documentName);
                     metadata.put("topicId", topicId);
                     metadata.put("pageNo", pageNo);
 
-                    if (documentId == null || topicId == null) {
-                        return Mono.error(new IllegalArgumentException("❌ Missing required metadata"));
-                    }
-
                     log.info("🚀 Ingesting {} chunks for docId={} topicId={} pageNo={}",
                             chunks.size(), documentId, topicId, pageNo);
 
-                    Mono<Void> pineconeIngest = pineconeVectorService.saveChunksToPineCone(chunks, metadata)
-                            .doOnSuccess(v -> log.info("✅ Pinecone ingestion complete for page={} docId={}", pageNo, documentId));
-
-                    Mono<Void> neo4jIngest = neo4jGraphService.saveChunksToNeo4j(chunks, metadata)
-                            .doOnSuccess(v -> log.info("✅ Neo4j ingestion complete for page={} docId={}", pageNo, documentId));
-
-                    return Mono.when(pineconeIngest, neo4jIngest)
-                            .doOnSuccess(v -> log.info("🎯 Both Pinecone + Neo4j done for page={} docId={}", pageNo, documentId));
+                    // 1. First save to Neo4j
+                    return neo4jGraphService.saveChunksToNeo4j(chunks, metadata)
+                            .doOnSuccess(v -> log.info("✅ Neo4j ingestion complete for page={} docId={}", pageNo, documentId))
+                            // 2. Then only if Neo4j succeeds, save to Pinecone
+                            .then(pineconeVectorService.saveChunksToPineCone(chunks, metadata))
+                            .doOnSuccess(v -> log.info("✅ Pinecone ingestion complete for page={} docId={}", pageNo, documentId))
+                            .doOnSuccess(v -> log.info("🎯 Both Neo4j → Pinecone done for page={} docId={}", pageNo, documentId));
                 })
                 .then()
-                .doOnSuccess(v -> log.info("🏁 Finished ingestion for documentId={} into BOTH Pinecone + Neo4j", documentId))
+                .doOnSuccess(v -> log.info("🏁 Finished ingestion for documentId={} into Neo4j → Pinecone", documentId))
                 .doOnError(e -> log.error("❌ Ingestion failed for documentId={}: {}", documentId, e.getMessage(), e));
     }
-
-
 }
