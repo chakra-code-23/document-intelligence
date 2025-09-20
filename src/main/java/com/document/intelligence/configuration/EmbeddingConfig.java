@@ -11,7 +11,7 @@ public class EmbeddingConfig {
     @Bean
     public EmbeddingModel ollamaEmbeddingModel() {
         return OllamaEmbeddingModel.builder()
-                .baseUrl("http://localhost:11434")
+                .baseUrl("http://127.0.0.1:11434")
                 .modelName("mxbai-embed-large")
                 .build();
     }
