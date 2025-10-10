@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.s3.model.*;
 @Slf4j
 public class S3Service {
 
+
     private final S3AsyncClient s3Client;
 
     public Mono<Void> upload(String bucket, String key, byte[] data) {
@@ -30,7 +31,7 @@ public class S3Service {
         return Mono.fromFuture(() -> s3Client.putObject(request, body))
                 .doOnSuccess(resp -> log.info("Upload completed for key={}", key))
                 .doOnError(err -> log.error("Upload failed for key={}", key, err))
-                .then(); // <--- important: completes only after S3 confirms
+                .then();
     }
 
     public Mono<byte[]> download(String bucket, String key) {

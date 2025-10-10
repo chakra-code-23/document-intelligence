@@ -83,6 +83,7 @@ public class PineconeVectorService {
                             .subscribeOn(Schedulers.boundedElastic())
                             .map(embedding -> Map.of("embedding", embedding, "segment", segment));
                 })
+
                 .flatMap(entry -> {
                     Embedding embedding = (Embedding) entry.get("embedding");
                     TextSegment segment = (TextSegment) entry.get("segment");

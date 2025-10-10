@@ -14,7 +14,7 @@ public class WebClientConfig {
     @Bean
     public WebClient webClient(WebClient.Builder builder) {
         return builder
-                .baseUrl(apiUrl) // 👈 base URL only
+                .baseUrl(apiUrl)
                 .build();
     }
 }

@@ -39,13 +39,6 @@ public class DynamoDbConfig {
     }
 
     @Bean
-    public DynamoDbEnhancedClient dynamoDbEnhancedClient(DynamoDbClient dynamoDbClient) {
-        return DynamoDbEnhancedClient.builder()
-                .dynamoDbClient(dynamoDbClient)
-                .build();
-    }
-
-    @Bean
     public DynamoDbAsyncClient dynamoDbAsyncClient() {
         AwsBasicCredentials credentials = AwsBasicCredentials.create(accessKey, secretKey);
 

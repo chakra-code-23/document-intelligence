@@ -27,6 +27,7 @@ public class SplitPdfDocumentService {
 
     public Mono<SplitResponse> split(String bucket, String s3Key, String documentId) {
         log.info("Split: downloading from bucket={}, key={}", bucket, s3Key);
+
         return s3Service.download(bucket, s3Key)
                 .flatMap(pdfBytes -> {
                     try (ByteArrayInputStream inputStream = new ByteArrayInputStream(pdfBytes)) {

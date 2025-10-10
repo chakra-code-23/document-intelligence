@@ -36,7 +36,7 @@ public class ClaudeApiService {
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
                     .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")   // ✅ added
+                    .header("Accept", "application/json")
                     .bodyValue(buildRequest(prompt))
                     .retrieve()
                     .onStatus(status -> status.isError(), clientResponse ->

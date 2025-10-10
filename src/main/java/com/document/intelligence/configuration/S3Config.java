@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.s3.S3AsyncClient;
 @Configuration
 public class S3Config {
 
+
     @Value("${aws.credentials.access-key}")
     private String accessKey;
 

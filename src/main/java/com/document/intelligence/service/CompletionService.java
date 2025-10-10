@@ -74,5 +74,6 @@ public class CompletionService {
                 )
                 .doOnSuccess(resp -> log.info("Completion stored in DB for documentId={}", documentId))
                 .doOnError(err -> log.error("Completion failed for documentId={}: {}", documentId, err.getMessage(), err));
+
     }
 }
