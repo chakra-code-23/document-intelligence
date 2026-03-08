@@ -4,6 +4,8 @@ import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 @Slf4j
@@ -11,9 +13,7 @@ public class ClaudeApiService {
 
     private final AnthropicChatModel chatModel;
 
-    public ClaudeApiService(
-            @Value("${claude.api.key}") String apiKey
-    ) {
+    public ClaudeApiService(@Value("${claude.api.key}") String apiKey) {
 
         this.chatModel = AnthropicChatModel.builder()
                 .apiKey(apiKey)
@@ -22,18 +22,18 @@ public class ClaudeApiService {
                 .build();
     }
 
+    public Mono<String> callClaudeReactive(String prompt) {
+
+        return Mono.fromCallable(() -> {
+                    log.debug("Calling Claude with prompt length: {}", prompt.length());
+                    return chatModel.generate(prompt);
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnError(e -> log.error("Claude API call failed: {}", e.getMessage(), e));
+    }
+
+    // Optional blocking version
     public String callClaude(String prompt) {
-        try {
-            log.debug("Calling Claude with prompt length: {}", prompt.length());
-
-            String response = chatModel.generate(prompt);
-
-            log.debug("Claude response received");
-            return response;
-
-        } catch (Exception e) {
-            log.error("Claude API call failed: {}", e.getMessage(), e);
-            throw new RuntimeException("Claude API call failed", e);
-        }
+        return callClaudeReactive(prompt).block();
     }
 }

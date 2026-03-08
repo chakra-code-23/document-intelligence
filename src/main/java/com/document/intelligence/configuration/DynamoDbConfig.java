@@ -12,7 +12,6 @@ import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-
 @Configuration
 public class DynamoDbConfig {
 
@@ -31,10 +30,12 @@ public class DynamoDbConfig {
     @Bean
     public DynamoDbClient dynamoDbClient() {
         return DynamoDbClient.builder()
-                .region(software.amazon.awssdk.regions.Region.of(region))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(accessKey, secretKey)
-                ))
+                .region(Region.of(region))
+                .credentialsProvider(
+                        StaticCredentialsProvider.create(
+                                AwsBasicCredentials.create(accessKey, secretKey)
+                        )
+                )
                 .build();
     }
 
@@ -48,10 +49,21 @@ public class DynamoDbConfig {
                 .build();
     }
 
+    // ⭐ ADD THIS
+    @Bean
+    public DynamoDbEnhancedClient dynamoDbEnhancedClient(DynamoDbClient dynamoDbClient) {
+        return DynamoDbEnhancedClient.builder()
+                .dynamoDbClient(dynamoDbClient)
+                .build();
+    }
+
     @Bean
     public DynamoDbTable<DocumentMetadata> documentMetadataTable(
             DynamoDbEnhancedClient enhancedClient) {
-        return enhancedClient.table(documentMetadataTable,
-                TableSchema.fromBean(com.document.intelligence.model.DocumentMetadata.class));
+
+        return enhancedClient.table(
+                documentMetadataTable,
+                TableSchema.fromBean(DocumentMetadata.class)
+        );
     }
 }
