@@ -93,6 +93,12 @@
             <version>0.32.0</version>
         </dependency>
 
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-anthropic</artifactId>
+            <version>0.35.0</version>
+        </dependency>
+
         <!-- Neo4j Java driver (required for AuraDB connection) -->
         <dependency>
             <groupId>org.neo4j.driver</groupId>
