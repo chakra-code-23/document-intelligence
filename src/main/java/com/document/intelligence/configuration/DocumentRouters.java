@@ -27,6 +27,10 @@ public class DocumentRouters {
 
     @Bean
     public RouterFunction<ServerResponse> qaRoutes(QaHandler qaHandler) {
-        return RouterFunctions.route(POST("/qa/ask"), qaHandler::askQuestion);
+        return RouterFunctions.route()
+                .path("/api", builder ->
+                        builder.POST("/qa/ask", qaHandler::askQuestion)
+                )
+                .build();
     }
 }

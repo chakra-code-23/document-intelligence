@@ -17,7 +17,7 @@ public class ClaudeApiService {
 
         this.chatModel = AnthropicChatModel.builder()
                 .apiKey(apiKey)
-                .modelName("claude-3-sonnet-20240229")
+                .modelName("claude-3-haiku-20240307")
                 .maxTokens(1000)
                 .build();
     }
