@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: document-intelligence
+
+aws:
+  region: ap-south-1
+  dynamodb:
+    table:
+      document-metadata: document_metadata
+      chat-history: chat_history
+  credentials:
+    access-key: ${AWS_ACCESS_KEY}
+    secret-key: ${AWS_SECRET_KEY}
+
+openai:
+  api-key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+
+pinecone:
+  api:
+    key: ${PINECONE_API_KEY}
+  environment: us-east1-gcp
+  index:
+    name: document
+    dimension: 1024
+    podType: s1
+
+neo4j:
+  uri: ${NEO4J_URI}
+  username: ${NEO4J_USERNAME}
+  password: ${NEO4J_PASSWORD}
+  database: neo4j
+
+claude:
+  api:
+    key: ${CLAUDE_API_KEY}
+    url: https://api.anthropic.com
+
+logging:
+  level:
+    com.document.intelligence.service: DEBUG
