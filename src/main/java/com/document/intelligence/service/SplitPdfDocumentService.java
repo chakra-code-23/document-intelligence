@@ -43,6 +43,7 @@ public class SplitPdfDocumentService {
                         DocumentSplitter splitter = new DocumentByCharacterSplitter(1000, 50);
                         List<TextSegment> segments = splitter.splitAll(docs);
 
+
                         // Build response
                         List<PageChunks> pages = new ArrayList<>();
                         int chunkNo = 1;
